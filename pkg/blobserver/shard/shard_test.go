@@ -89,6 +89,7 @@ func (sto testStorage) checkShard(b *test.Blob, expectShard int) {
 
 		if shardN != expectShard {
 			sto.t.Errorf("found ref %v in shard %d, expected in shard %d", b.BlobRef(), shardN, expectShard)
+			continue
 		}
 
 		// node was found, and we expected it
