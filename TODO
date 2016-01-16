@@ -136,10 +136,8 @@ Offline list:
    replaced with a "ReceiveString" method which combines the
    blobref-from-string and ReceiveNoHash at once.
 
--- union storage target. sharder can be thought of a specialization
-   of union. sharder already unions, but has a hard-coded policy
-   of where to put new blobs. union could a library (used by sharder)
-   with a pluggable policy on that.
+-- add a blobserver/shard storage policy that tolerates backends being
+   added, removed, swapped, or faulty, to a configured level.
 
 -- support for running cammount under camlistored. especially for OS X,
    where the lifetime of the background daemon will be the same as the

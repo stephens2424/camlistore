@@ -177,6 +177,22 @@ type Storage interface {
 	BlobRemover
 }
 
+// StorageStatter is a storage implementation that also provides
+// statistics about itself.
+type StorageStatter interface {
+	Storage
+	StorageCapacityer
+	StorageConsumer
+}
+
+type StorageCapacityer interface {
+	Capacity() (uint64, error)
+}
+
+type StorageConsumer interface {
+	Consumed() (uint64, error)
+}
+
 type FetcherEnumerator interface {
 	blob.Fetcher
 	BlobEnumerator

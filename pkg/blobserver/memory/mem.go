@@ -1,5 +1,5 @@
 /*
-Copyright 2014 The Camlistore Authors
+Copyright 2016 The Camlistore Authors
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -56,6 +56,10 @@ type Storage struct {
 
 	blobsFetched int64 // atomic
 	bytesFetched int64 // atomic
+}
+
+func (s *Storage) Consumed() uint64 {
+	return uint64(s.size)
 }
 
 var _ blobserver.BlobStreamer = (*Storage)(nil)

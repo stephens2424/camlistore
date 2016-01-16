@@ -25,9 +25,10 @@ import (
 )
 
 type testStorage struct {
-	sto    *shardStorage
-	shards []*test.Fetcher
-	t      *testing.T
+	sto     *shardStorage
+	shards  []*test.Fetcher
+	t       *testing.T
+	limited map[blobserver.Storage]uint64
 }
 
 func newTestStorage(t *testing.T) *testStorage {
@@ -40,10 +41,16 @@ func newTestStorage(t *testing.T) *testStorage {
 		shards: []blobserver.Storage{a, b},
 	}
 
+	sto.selector = RegularBackendSelector(sto.shards)
+
 	ts := &testStorage{
 		sto:    sto,
 		shards: []*test.Fetcher{a, b},
 		t:      t,
+		limited: map[blobserver.Storage]uint64{
+			a: 1 << 16,
+			b: 1 << 15,
+		},
 	}
 
 	return ts
@@ -55,7 +62,16 @@ func TestShardBasic(t *testing.T) {
 	})
 }
 
-func TestShard(t *testing.T) {
+func TestSizeWeightedWithLimit(t *testing.T) {
+	storagetest.Test(t, func(t *testing.T) (sto blobserver.Storage, cleanup func()) {
+		tstore := newTestStorage(t)
+		store := tstore.sto
+		store.selector = NewSizeWeightedBackendSelectorWithLimits(tstore.limited)
+		return store, nil
+	})
+}
+
+func TestShardRegular(t *testing.T) {
 	thingA := &test.Blob{"something"}
 	thingB := &test.Blob{"something else"}
 
@@ -71,6 +87,23 @@ func TestShard(t *testing.T) {
 	// sha1-637828c03aae38af639cc721200f2584864e8797
 	// sum32: 1668819136
 	ts.checkShard(thingB, 0)
+}
+
+func TestWeighted(t *testing.T) {
+	ts := newTestStorage(t)
+	ts.sto.selector = NewSizeWeightedBackendSelectorWithLimits(ts.limited)
+
+	thingA := &test.Blob{"something"}
+	thingB := &test.Blob{"something else"}
+	thingC := &test.Blob{"again something else."}
+
+	ts.sto.ReceiveBlob(thingA.BlobRef(), thingA.Reader())
+	ts.sto.ReceiveBlob(thingB.BlobRef(), thingB.Reader())
+	ts.sto.ReceiveBlob(thingC.BlobRef(), thingC.Reader())
+
+	ts.checkShard(thingA, 0)
+	ts.checkShard(thingB, 0)
+	ts.checkShard(thingC, 1)
 }
 
 // checkShard iterates through shards and find the blob. error if it is not found in expectShard, found somewhere else, or not found at all
@@ -89,6 +122,7 @@ func (sto testStorage) checkShard(b *test.Blob, expectShard int) {
 
 		if shardN != expectShard {
 			sto.t.Errorf("found ref %v in shard %d, expected in shard %d", b.BlobRef(), shardN, expectShard)
+			continue
 		}
 
 		// node was found, and we expected it

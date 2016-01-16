@@ -34,6 +34,7 @@ package shard // import "camlistore.org/pkg/blobserver/shard"
 import (
 	"errors"
 	"io"
+	"sync"
 
 	"camlistore.org/pkg/blob"
 	"camlistore.org/pkg/blobserver"
@@ -44,6 +45,8 @@ import (
 type shardStorage struct {
 	shardPrefixes []string
 	shards        []blobserver.Storage
+	mtx           sync.Mutex
+	selector      BackendSelector
 }
 
 func newFromConfig(ld blobserver.Loader, config jsonconfig.Obj) (storage blobserver.Storage, err error) {
@@ -72,7 +75,7 @@ func (sto *shardStorage) shard(b blob.Ref) blobserver.Storage {
 }
 
 func (sto *shardStorage) shardNum(b blob.Ref) uint32 {
-	return b.Sum32() % uint32(len(sto.shards))
+	return sto.selector.SelectBackend(b)
 }
 
 func (sto *shardStorage) Fetch(b blob.Ref) (file io.ReadCloser, size uint32, err error) {
