@@ -253,6 +253,25 @@ func (b *lowBuilder) addUIConfig() {
 	if thumbCache != nil {
 		args["scaledImage"] = thumbCache
 	}
+
+	if b.high.VideoThumbnail != nil {
+		// Setting a precedent here. As thumbnail.Service is an exported
+		// func, I think it would be gross to give it a jsonconfig.Obj
+		// argument, and it's a much nicer API to give it a
+		// serverconfig.VideoThumbnail instead.
+		// With that in mind, we could convert b.high.VideoThumbnail to
+		// a jsonconfig.Obj here, and reconvert it to a
+		// serverconfig.VideoThumbnail before passing it to
+		// thumbnail.Service (so probably in pkg/server/ui.go). Or, we
+		// could simply encode/decode as JSON, which is both simpler and
+		// what people are used to, and which is what I'm choosing to do
+		// instead.
+		vtConf, err := json.Marshal(b.high.VideoThumbnail)
+		if err != nil {
+			log.Fatal(err)
+		}
+		args["videoThumbnail"] = string(vtConf)
+	}
 	b.addPrefix("/ui/", "ui", args)
 }
 
@@ -961,9 +980,10 @@ func numSet(vv ...interface{}) (num int) {
 }
 
 var defaultBaseConfig = serverconfig.Config{
-	Listen: ":3179",
-	HTTPS:  false,
-	Auth:   "localhost",
+	Listen:         ":3179",
+	HTTPS:          false,
+	Auth:           "localhost",
+	VideoThumbnail: &serverconfig.VideoThumbnail{},
 }
 
 // WriteDefaultConfigFile generates a new default high-level server configuration

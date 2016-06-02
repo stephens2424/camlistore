@@ -156,35 +156,52 @@ func New(s sorted.KeyValue) (*Index, error) {
 			// the user with a more useful tip:
 			tip = `(For the dev server, run "devcam server --wipe" to wipe both your blobs and index)`
 		} else {
-			if is4To5SchemaBump(schemaVersion) {
+			if is4To6SchemaBump(schemaVersion) {
 				return idx, errMissingWholeRef
+			}
+			if is5To6SchemaBump(schemaVersion) {
+				return idx, errNoVidThumbnail
 			}
 			tip = "Run 'camlistored --reindex' (it might take awhile, but shows status). Alternative: 'camtool dbinit' (or just delete the file for a file based index), and then 'camtool sync --all'"
 		}
 		return nil, fmt.Errorf("index schema version is %d; required one is %d. You need to reindex. %s",
 			schemaVersion, requiredSchemaVersion, tip)
 	}
-	if err := idx.initDeletesCache(); err != nil {
-		return nil, fmt.Errorf("Could not initialize index's deletes cache: %v", err)
-	}
-	if err := idx.initNeededMaps(); err != nil {
-		return nil, fmt.Errorf("Could not initialize index's missing blob maps: %v", err)
+	if err := idx.finalizeInit(); err != nil {
+		return nil, err
 	}
 	return idx, nil
 }
 
-func is4To5SchemaBump(schemaVersion int) bool {
-	return schemaVersion == 4 && requiredSchemaVersion == 5
+func (idx *Index) finalizeInit() error {
+	if err := idx.initDeletesCache(); err != nil {
+		return fmt.Errorf("Could not initialize index's deletes cache: %v", err)
+	}
+	if err := idx.initNeededMaps(); err != nil {
+		return fmt.Errorf("Could not initialize index's missing blob maps: %v", err)
+	}
+	return nil
 }
 
-var errMissingWholeRef = errors.New("missing wholeRef field in fileInfo rows")
+func is4To6SchemaBump(schemaVersion int) bool {
+	return schemaVersion == 4 && requiredSchemaVersion == 6
+}
+
+func is5To6SchemaBump(schemaVersion int) bool {
+	return schemaVersion == 5 && requiredSchemaVersion == 6
+}
+
+var (
+	errMissingWholeRef = errors.New("missing wholeRef field in fileInfo rows")
+	errNoVidThumbnail  = errors.New("missing keyVideo entries for existing videos")
+)
 
 // fixMissingWholeRef appends the wholeRef to all the keyFileInfo rows values. It should
 // only be called to upgrade a version 4 index schema to version 5.
 func (x *Index) fixMissingWholeRef(fetcher blob.Fetcher) (err error) {
 	// We did that check from the caller, but double-check again to prevent from misuse
 	// of that function.
-	if x.schemaVersion() != 4 || requiredSchemaVersion != 5 {
+	if x.schemaVersion() != 4 || requiredSchemaVersion < 5 {
 		panic("fixMissingWholeRef should only be used when upgrading from v4 to v5 of the index schema")
 	}
 	log.Println("index: fixing the missing wholeRef in the fileInfo rows...")
@@ -300,24 +317,48 @@ func newFromConfig(ld blobserver.Loader, config jsonconfig.Obj) (blobserver.Stor
 	}
 
 	ix, err := New(kv)
-	// TODO(mpl): next time we need to do another fix, make a new error
-	// type that lets us apply the needed fix depending on its value or
-	// something. For now just one value/fix.
-	if err == errMissingWholeRef {
-		// TODO: maybe we don't want to do that automatically. Brad says
-		// we have to think about the case on GCE/CoreOS in particular.
-		if err := ix.fixMissingWholeRef(sto); err != nil {
-			ix.Close()
-			return nil, fmt.Errorf("could not fix missing wholeRef entries: %v", err)
-		}
-		ix, err = New(kv)
-	}
+	ix, err = maybeFixIndex(err, oldIndex{
+		sto: sto,
+		kv:  kv,
+		ix:  ix,
+	})
 	if err != nil {
 		return nil, err
 	}
 	ix.InitBlobSource(sto)
 
 	return ix, err
+}
+
+type oldIndex struct {
+	sto blobserver.Storage
+	kv  sorted.KeyValue
+	ix  *Index
+}
+
+func maybeFixIndex(err error, oix oldIndex) (*Index, error) {
+	switch err {
+	case errMissingWholeRef:
+		// TODO: maybe we don't want to do that automatically. Brad says
+		// we have to think about the case on GCE/CoreOS in particular.
+		if err := oix.ix.fixMissingWholeRef(oix.sto); err != nil {
+			oix.ix.Close()
+			return nil, fmt.Errorf("could not fix missing wholeRef entries: %v", err)
+		}
+		return New(oix.kv)
+	case errNoVidThumbnail:
+		// TODO(mpl): do the upgrade for them? maybe, once the rest of the CL is approved.
+		log.Print("Video indexing now supported. You need to reindex for your existing videos to benefit from it.")
+		if err := oix.ix.finalizeInit(); err != nil {
+			return nil, err
+		}
+		return oix.ix, nil
+	case nil:
+		return oix.ix, nil
+	default:
+		oix.ix.Close()
+		return nil, err
+	}
 }
 
 func (x *Index) String() string {
@@ -1245,6 +1286,48 @@ func (x *Index) GetImageInfo(ctx context.Context, fileRef blob.Ref) (camtypes.Im
 		return camtypes.ImageInfo{}, fmt.Errorf("index: bogus key %q = %q", key, v)
 	}
 	return ii, nil
+}
+
+// v is "width|height"
+func kvVideoInfo(v []byte) (vi camtypes.VideoInfo, ok bool) {
+	pipei := bytes.IndexByte(v, '|')
+	if pipei < 0 {
+		return
+	}
+	w, err := strutil.ParseUintBytes(v[:pipei], 10, 16)
+	if err != nil {
+		return
+	}
+	h, err := strutil.ParseUintBytes(v[pipei+1:], 10, 16)
+	if err != nil {
+		return
+	}
+	vi.Width = uint16(w)
+	vi.Height = uint16(h)
+	return vi, true
+}
+
+func (x *Index) GetVideoInfo(ctx context.Context, fileRef blob.Ref) (camtypes.VideoInfo, error) {
+	if x.corpus != nil {
+		return x.corpus.getVideoInfo(ctx, fileRef)
+	}
+	fi, err := x.GetFileInfo(ctx, fileRef)
+	if err != nil {
+		return camtypes.VideoInfo{}, err
+	}
+	key := keyVideo.Key(fi.WholeRef.String())
+	v, err := x.s.Get(key)
+	if err == sorted.ErrNotFound {
+		err = os.ErrNotExist
+	}
+	if err != nil {
+		return camtypes.VideoInfo{}, err
+	}
+	vi, ok := kvVideoInfo([]byte(v))
+	if !ok {
+		return camtypes.VideoInfo{}, fmt.Errorf("index: bogus video key %q = %q", key, v)
+	}
+	return vi, nil
 }
 
 func (x *Index) GetMediaTags(ctx context.Context, fileRef blob.Ref) (tags map[string]string, err error) {

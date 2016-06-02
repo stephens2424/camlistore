@@ -19,17 +19,16 @@ package thumbnail
 import (
 	"bytes"
 	"io/ioutil"
-	"net/url"
 	"os"
 	"os/exec"
 	"testing"
-	"time"
 
 	"camlistore.org/pkg/blob"
 	"camlistore.org/pkg/blobserver"
 	"camlistore.org/pkg/magic"
 	"camlistore.org/pkg/schema"
 	"camlistore.org/pkg/test"
+	"camlistore.org/pkg/types/serverconfig"
 )
 
 const testFilepath = "testdata/small.webm"
@@ -78,10 +77,11 @@ func TestMakeThumbnail(t *testing.T) {
 	store, ref := storageAndBlobRef(t)
 	tmpFile, _ := ioutil.TempFile(os.TempDir(), "camlitest")
 	defer tmpFile.Close()
-	service := NewService(DefaultThumbnailer, 2*time.Second, 5)
-	err := service.Generate(ref, tmpFile, store)
-
+	service, err := NewService(&serverconfig.VideoThumbnail{})
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Generate(ref, tmpFile, store); err != nil {
 		t.Fatal(err)
 	}
 
@@ -102,18 +102,13 @@ func TestMakeThumbnailWithZeroMaxProcsAndTimeout(t *testing.T) {
 	store, ref := storageAndBlobRef(t)
 	tmpFile, _ := ioutil.TempFile(os.TempDir(), "camlitest")
 	defer tmpFile.Close()
-	service := NewService(DefaultThumbnailer, 0, 0)
-	err := service.Generate(ref, tmpFile, store)
-
+	service, err := NewService(&serverconfig.VideoThumbnail{Timeout: 0, MaxProcs: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
-}
-
-type failingThumbnailer struct{}
-
-func (failingThumbnailer) Command(*url.URL) (string, []string) {
-	return "failcommand", []string{}
+	if err := service.Generate(ref, tmpFile, store); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestMakeThumbnailFailure(t *testing.T) {
@@ -122,20 +117,16 @@ func TestMakeThumbnailFailure(t *testing.T) {
 	}
 
 	store, ref := storageAndBlobRef(t)
-	service := NewService(failingThumbnailer{}, 2*time.Second, 5)
-	err := service.Generate(ref, ioutil.Discard, store)
-
+	service, err := NewService(&serverconfig.VideoThumbnail{Command: []string{"failcommand"}, Timeout: 2000, MaxProcs: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = service.Generate(ref, ioutil.Discard, store)
 	if err == nil {
 		t.Error("expected to fail.")
 	}
 	t.Logf("err output: %v", err)
 
-}
-
-type sleepyThumbnailer struct{}
-
-func (sleepyThumbnailer) Command(*url.URL) (string, []string) {
-	return "bash", []string{"-c", `echo "MAY SHOW" 1>&2; sleep 10; echo "SHOULD NEVER SHOW" 1>&2`}
 }
 
 func TestThumbnailGenerateTimeout(t *testing.T) {
@@ -145,10 +136,13 @@ func TestThumbnailGenerateTimeout(t *testing.T) {
 	}
 
 	store, ref := storageAndBlobRef(t)
-	service := NewService(sleepyThumbnailer{}, time.Duration(time.Millisecond), 5)
-	err := service.Generate(ref, ioutil.Discard, store)
-
-	if err != errTimeout {
+	service, err := NewService(&serverconfig.VideoThumbnail{
+		Command: []string{"bash", "-c", `echo "MAY SHOW" 1>&2; sleep 10; echo "SHOULD NEVER SHOW" 1>&2`},
+		Timeout: 1, MaxProcs: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Generate(ref, ioutil.Discard, store); err != errTimeout {
 		t.Errorf("expected to timeout: %v", err)
 	}
 }

@@ -119,14 +119,30 @@ type errReader struct{ err error }
 
 func (er errReader) Read([]byte) (int, error) { return 0, er.err }
 
-// TODO(mpl): unexport VideoExtensions
+var videoExtensions = map[string]bool{
+	"3gp":  true,
+	"avi":  true,
+	"flv":  true,
+	"m1v":  true,
+	"m2v":  true,
+	"m4v":  true,
+	"mkv":  true,
+	"mov":  true,
+	"mp4":  true,
+	"mpeg": true,
+	"mpg":  true,
+	"ogv":  true,
+	"wmv":  true,
+	"webm": true,
+}
 
-// VideoExtensions are common video filename extensions that are not
-// covered by mime.TypeByExtension.
-var VideoExtensions = map[string]bool{
-	"m1v": true,
-	"m2v": true,
-	"m4v": true,
+// IsVideo tells whether it is a video from mimeType and filename.
+func IsVideo(mimeType string, filename string) bool {
+	if strings.HasPrefix(mimeType, "video/") {
+		return true
+	}
+
+	return HasExtension(filename, videoExtensions)
 }
 
 // HasExtension returns whether the file extension of filename is among

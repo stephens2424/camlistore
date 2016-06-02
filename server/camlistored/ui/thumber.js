@@ -31,8 +31,26 @@ cam.Thumber = function(pathname, opt_aspect) {
 cam.Thumber.SIZES = [64, 128, 256, 375, 500, 750, 1000, 1500, 2000];
 
 cam.Thumber.fromImageMeta = function(imageMeta) {
-	return new cam.Thumber(goog.string.subs('thumbnail/%s/%s', imageMeta.blobRef, (imageMeta.file && imageMeta.file.fileName) || imageMeta.blobRef + '.jpg'),
-		imageMeta.image.width / imageMeta.image.height);
+	return cam.Thumber.fromMeta_(imageMeta, 'image');
+};
+
+cam.Thumber.fromVideoMeta = function(videoMeta) {
+	return cam.Thumber.fromMeta_(videoMeta, 'video');
+};
+
+cam.Thumber.fromMeta_ = function(meta, fileType) {
+	var ext = '.jpg';
+	var subMeta = meta.image;
+	if (fileType != 'image') {
+		if (fileType != 'video') {
+			console.log('unsupported meta type');
+			return null;
+		}
+		ext = '.png';
+		subMeta = meta.video;
+	}
+	return new cam.Thumber(goog.string.subs('thumbnail/%s/%s', meta.blobRef, (meta.file && meta.file.fileName) || meta.blobRef + ext),
+		subMeta.width / subMeta.height);
 };
 
 // @param {number|goog.math.Size} minSize The minimum size of the required thumbnail. If this is a number, it is the minimum height. If it is goog.math.Size, then it is the min size of both dimensions.

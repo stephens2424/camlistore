@@ -64,6 +64,7 @@ func DefaultEnvConfig() (*Config, error) {
 		ipOrHost = host
 	}
 
+	// TODO(mpl): video thumbnailer? ffmpeg on GCE?
 	highConf := &serverconfig.Config{
 		Auth:               auth,
 		BaseURL:            fmt.Sprintf("https://%s", ipOrHost),

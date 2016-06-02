@@ -490,7 +490,13 @@ func TestFixMissingWholeref(t *testing.T) {
 	// init fixed index
 	ix, err = index.New(s)
 	if err != nil {
-		t.Fatal(err)
+		// We've only upgraded to schema v5, so we expect to get the v5 to v6 error
+		if err != index.Exp_ErrNoVidThumbnail {
+			t.Fatal(err)
+		}
+		if err := ix.Exp_FinalizeInit(); err != nil {
+			t.Fatal(err)
+		}
 	}
 	// and check that the value is now actually fixed
 	fi, err := ix.GetFileInfo(ctx, fileBlobRef)

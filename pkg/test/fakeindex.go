@@ -177,6 +177,10 @@ func (fi *FakeIndex) GetImageInfo(ctx context.Context, fileRef blob.Ref) (camtyp
 	panic("NOIMPL")
 }
 
+func (fi *FakeIndex) GetVideoInfo(ctx context.Context, fileRef blob.Ref) (camtypes.VideoInfo, error) {
+	panic("NOIMPL")
+}
+
 func (fi *FakeIndex) GetMediaTags(ctx context.Context, fileRef blob.Ref) (tags map[string]string, err error) {
 	_, ok := fi.meta[fileRef]
 	if !ok {

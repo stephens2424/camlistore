@@ -236,6 +236,8 @@ type DescribedBlob struct {
 	Dir *camtypes.FileInfo `json:"dir,omitempty"`
 	// if camliType "file", and File.IsImage()
 	Image *camtypes.ImageInfo `json:"image,omitempty"`
+	// if camliType "file", and File.IsVideo()
+	Video *camtypes.VideoInfo `json:"video,omitempty"`
 	// if camliType "file" and media file
 	MediaTags map[string]string `json:"mediaTags,omitempty"`
 
@@ -777,6 +779,24 @@ func (dr *DescribeRequest) doDescribe(ctx context.Context, br blob.Ref, depth in
 				}
 			} else {
 				des.Image = &imgInfo
+			}
+		}
+		if des.File.IsVideo() {
+			vidInfo, err := dr.sh.index.GetVideoInfo(ctx, br)
+			if err != nil {
+				if !os.IsNotExist(err) {
+					dr.addError(br, err)
+				} else {
+					// Note that here I'm breaking an implicit convention that we had with images, i.e.
+					// des.Image != null -> client can assume image is fully described
+					// because it's useful for the web UI to know:
+					// des.Video != null -> we have a video (but it might not be fully described)
+					// But is it ok to do so?
+					// TODO(mpl): maybe clients can use another clue? later. too many changes already.
+					des.Video = &camtypes.VideoInfo{}
+				}
+			} else {
+				des.Video = &vidInfo
 			}
 		}
 		if mediaTags, err := dr.sh.index.GetMediaTags(ctx, br); err == nil {

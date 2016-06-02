@@ -134,15 +134,7 @@ func (fi *FileInfo) IsImage() bool {
 }
 
 func (fi *FileInfo) IsVideo() bool {
-	if strings.HasPrefix(fi.MIMEType, "video/") {
-		return true
-	}
-
-	if magic.HasExtension(fi.FileName, magic.VideoExtensions) {
-		return true
-	}
-
-	return strings.HasPrefix(mime.TypeByExtension(filepath.Ext(fi.FileName)), "video/")
+	return magic.IsVideo(fi.MIMEType, fi.FileName)
 }
 
 // ImageInfo describes an image file.
@@ -154,6 +146,14 @@ type ImageInfo struct {
 	// Width is the visible width of the image (after any necessary EXIF rotation).
 	Width uint16 `json:"width"`
 	// Height is the visible height of the image (after any necessary EXIF rotation).
+	Height uint16 `json:"height"`
+}
+
+// VideoInfo describes a video file.
+//
+// The same remarks as in ImageInfo about uint16s apply here.
+type VideoInfo struct {
+	Width  uint16 `json:"width"`
 	Height uint16 `json:"height"`
 }
 

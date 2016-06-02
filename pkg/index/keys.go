@@ -28,7 +28,8 @@ import (
 // an index key type is added, changed, or removed.
 // Version 4: EXIF tags + GPS
 // Version 5: wholeRef added to keyFileInfo
-const requiredSchemaVersion = 5
+// Version 6: keyVideo added
+const requiredSchemaVersion = 6
 
 // type of key returns the identifier in k before the first ":" or "|".
 // (Originally we packed keys by hand and there are a mix of styles)
@@ -321,6 +322,18 @@ var (
 		"imagesize",
 		[]part{
 			{"fileref", typeBlobRef}, // blobref of "file" schema blob
+		},
+		[]part{
+			{"width", typeStr},
+			{"height", typeStr},
+		},
+	}
+
+	// Video file information.
+	keyVideo = &keyType{
+		"video",
+		[]part{
+			{"wholeRef", typeBlobRef},
 		},
 		[]part{
 			{"width", typeStr},

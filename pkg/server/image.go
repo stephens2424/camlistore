@@ -40,6 +40,8 @@ import (
 	"camlistore.org/pkg/magic"
 	"camlistore.org/pkg/schema"
 	"camlistore.org/pkg/search"
+	"camlistore.org/pkg/video/thumbnail"
+
 	_ "github.com/nf/cr2"
 	"go4.org/readerutil"
 	"go4.org/syncutil"
@@ -65,8 +67,9 @@ type ImageHandler struct {
 	Cache               blobserver.Storage // optional
 	MaxWidth, MaxHeight int
 	Square              bool
-	ThumbMeta           *ThumbMeta    // optional cache index for scaled images
-	ResizeSem           *syncutil.Sem // Limit peak RAM used by concurrent image thumbnail calls.
+	ThumbMeta           *ThumbMeta         // optional cache index for scaled images
+	ResizeSem           *syncutil.Sem      // Limit peak RAM used by concurrent image thumbnail calls.
+	VideoThumbnail      *thumbnail.Service // To generate thumbnails from videos. Optional.
 }
 
 type subImager interface {
@@ -173,13 +176,12 @@ func cacheKey(bref string, width int, height int) string {
 	return fmt.Sprintf("scaled:%v:%dx%d:tv%v", bref, width, height, images.ThumbnailVersion())
 }
 
-// ScaledCached reads the scaled version of the image in file,
-// if it is in cache and writes it to buf.
+// scaledCached reads the scaled version of the image in cache mapped by key,
+// if it exists, and writes it to buf.
 //
 // On successful read and population of buf, the returned format is non-empty.
 // Almost all errors are not interesting. Real errors will be logged.
-func (ih *ImageHandler) scaledCached(buf *bytes.Buffer, file blob.Ref) (format string) {
-	key := cacheKey(file.String(), ih.MaxWidth, ih.MaxHeight)
+func (ih *ImageHandler) scaledCached(buf *bytes.Buffer, key string) (format string) {
 	br, err := ih.ThumbMeta.Get(key)
 	if err == errCacheMiss {
 		return
@@ -228,7 +230,7 @@ func imageConfigFromReader(r io.Reader) (io.Reader, image.Config, error) {
 	return io.MultiReader(header, r), conf, err
 }
 
-func (ih *ImageHandler) newFileReader(fileRef blob.Ref) (io.ReadCloser, error) {
+func (ih *ImageHandler) newFileReader(fileRef blob.Ref) (filename string, rc io.ReadCloser, err error) {
 	ctx := context.TODO()
 	fi, ok := fileInfoPacked(ctx, ih.Search, ih.Fetcher, nil, fileRef)
 	if debugPack {
@@ -239,7 +241,7 @@ func (ih *ImageHandler) newFileReader(fileRef blob.Ref) (io.ReadCloser, error) {
 		// returned an io.ReadCloser, but then the download
 		// handler would need more invasive changes for
 		// ServeContent. So tolerate this for now.
-		return struct {
+		return fi.name, struct {
 			io.Reader
 			io.Closer
 		}{
@@ -248,17 +250,16 @@ func (ih *ImageHandler) newFileReader(fileRef blob.Ref) (io.ReadCloser, error) {
 		}, nil
 	}
 	// Default path, not going through blobpacked's fast path:
-	return schema.NewFileReader(ih.Fetcher, fileRef)
+	fr, err := schema.NewFileReader(ih.Fetcher, fileRef)
+	if err != nil {
+		return "", nil, err
+	}
+	return fr.FileName(), fr, nil
 }
 
-func (ih *ImageHandler) scaleImage(fileRef blob.Ref) (*formatAndImage, error) {
-	fr, err := ih.newFileReader(fileRef)
-	if err != nil {
-		return nil, err
-	}
-	defer fr.Close()
+func (ih *ImageHandler) scaleImage(r io.Reader) (*formatAndImage, error) {
+	sr := readerutil.NewStatsReader(imageBytesFetchedVar, r)
 
-	sr := readerutil.NewStatsReader(imageBytesFetchedVar, fr)
 	sr, conf, err := imageConfigFromReader(sr)
 	if err != nil {
 		return nil, err
@@ -319,8 +320,38 @@ func (ih *ImageHandler) scaleImage(fileRef blob.Ref) (*formatAndImage, error) {
 
 // singleResize prevents generating the same thumbnail at once from
 // two different requests.  (e.g. sending out a link to a new photo
-// gallery to a big audience)
-var singleResize singleflight.Group
+// gallery to a big audience).
+// singleVidThumbGen is exactly the same thing for guarding the operation that
+// generates a thumbnail from a video.
+var singleResize, singleVidThumbGen singleflight.Group
+
+// originalVideoThumbnail gets from cache or generates the non-resized video thumbnail.
+func (ih *ImageHandler) originalVideoThumbnail(file blob.Ref) (io.Reader, error) {
+	if ih.VideoThumbnail == nil {
+		return nil, errors.New("video thumbnailing not available.")
+	}
+	useCache := ih.ThumbMeta != nil && !disableThumbCache
+	buf := new(bytes.Buffer)
+	key := cacheKey(file.String(), 0, 0) // key for the original size thumbnail image.
+	if useCache {
+		format := ih.scaledCached(buf, key)
+		if format != "" {
+			return buf, nil
+		}
+	}
+	thumbCacheMiss.Add(1)
+
+	_, err := singleVidThumbGen.Do(key, func() (interface{}, error) {
+		return nil, ih.VideoThumbnail.Generate(file, buf, ih.Fetcher)
+	})
+	if err != nil {
+		return nil, err
+	}
+	if useCache {
+		ih.cacheScaled(buf.Bytes(), key)
+	}
+	return buf, nil
+}
 
 func (ih *ImageHandler) ServeHTTP(rw http.ResponseWriter, req *http.Request, file blob.Ref) {
 	if !httputil.IsGet(req) {
@@ -355,7 +386,7 @@ func (ih *ImageHandler) ServeHTTP(rw http.ResponseWriter, req *http.Request, fil
 	cacheHit := false
 	if ih.ThumbMeta != nil && !disableThumbCache {
 		var buf bytes.Buffer
-		format = ih.scaledCached(&buf, file)
+		format = ih.scaledCached(&buf, key)
 		if format != "" {
 			cacheHit = true
 			imageData = buf.Bytes()
@@ -364,11 +395,34 @@ func (ih *ImageHandler) ServeHTTP(rw http.ResponseWriter, req *http.Request, fil
 
 	if !cacheHit {
 		thumbCacheMiss.Add(1)
+
+		filename, fr, err := ih.newFileReader(file)
+		if err != nil {
+			http.Error(rw, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		defer fr.Close()
+
+		mimeType, r := magic.MIMETypeFromReader(fr)
+		switch {
+		case strings.HasPrefix(mimeType, "image/"):
+		case magic.IsVideo(mimeType, filename):
+			buf, err := ih.originalVideoThumbnail(file)
+			if err != nil {
+				http.Error(rw, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			r = buf
+		default:
+			http.Error(rw, "Not an image or a video", http.StatusBadRequest)
+			return
+		}
+
 		imi, err := singleResize.Do(key, func() (interface{}, error) {
-			return ih.scaleImage(file)
+			return ih.scaleImage(r)
 		})
 		if err != nil {
-			http.Error(rw, err.Error(), 500)
+			http.Error(rw, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		im := imi.(*formatAndImage)

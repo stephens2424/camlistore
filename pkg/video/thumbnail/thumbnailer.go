@@ -21,7 +21,7 @@ import (
 	"net/url"
 	"os/exec"
 
-	"go4.org/jsonconfig"
+	"camlistore.org/pkg/video/ffmpeg"
 )
 
 // Thumbnailer is the interface that wraps the Command method.
@@ -30,50 +30,43 @@ import (
 // thumbnail and returns program and arguments.
 // The command is expected to output the thumbnail image on its stdout, or exit
 // with an error code.
-//
-// See FFmpegThumbnailer.Command for example.
 type Thumbnailer interface {
 	Command(*url.URL) (prog string, args []string)
 }
 
-// DefaultThumbnailer is the default Thumbnailer when no config is set.
-var DefaultThumbnailer Thumbnailer = FFmpegThumbnailer{}
+var DefaultCmd = ffmpeg.GenThumbnailCmd
 
-// FFmpegThumbnailer is a Thumbnailer that generates a thumbnail with ffmpeg.
-type FFmpegThumbnailer struct{}
+var _ Thumbnailer = (*FFmpeg)(nil)
 
-var _ Thumbnailer = (*FFmpegThumbnailer)(nil)
+// FFmpeg is a Thumbnailer that generates a thumbnail with ffmpeg.
+type FFmpeg struct{}
 
 // Command implements the Command method for the Thumbnailer interface.
-func (f FFmpegThumbnailer) Command(uri *url.URL) (string, []string) {
-	return "ffmpeg", []string{
-		"-seekable", "1",
-		"-i", uri.String(),
-		"-vf", "thumbnail",
-		"-frames:v", "1",
-		"-f", "image2pipe",
-		"-c:v", "png",
-		"pipe:1",
-	}
+func (f FFmpeg) Command(uri *url.URL) (string, []string) {
+	return DefaultCmd[0], replaceURI(DefaultCmd[1:], uri)
 }
 
-type configThumbnailer struct {
-	prog string
-	args []string
-}
-
-var _ Thumbnailer = (*configThumbnailer)(nil)
-
-func (ct *configThumbnailer) Command(uri *url.URL) (string, []string) {
-	args := make([]string, len(ct.args))
-	for index, arg := range ct.args {
+func replaceURI(withURI []string, uri *url.URL) []string {
+	args := make([]string, len(withURI))
+	for index, arg := range withURI {
 		if arg == "$uri" {
 			args[index] = uri.String()
 		} else {
 			args[index] = arg
 		}
 	}
-	return ct.prog, args
+	return args
+}
+
+var _ Thumbnailer = (*thumbnailer)(nil)
+
+type thumbnailer struct {
+	prog string
+	args []string
+}
+
+func (ct *thumbnailer) Command(uri *url.URL) (string, []string) {
+	return ct.prog, replaceURI(ct.args, uri)
 }
 
 func buildCmd(tn Thumbnailer, uri *url.URL, out io.Writer) *exec.Cmd {
@@ -81,12 +74,4 @@ func buildCmd(tn Thumbnailer, uri *url.URL, out io.Writer) *exec.Cmd {
 	cmd := exec.Command(prog, args...)
 	cmd.Stdout = out
 	return cmd
-}
-
-func thumbnailerFromConfig(config jsonconfig.Obj) Thumbnailer {
-	command := config.OptionalList("command")
-	if len(command) < 1 {
-		return DefaultThumbnailer
-	}
-	return &configThumbnailer{prog: command[0], args: command[1:]}
 }

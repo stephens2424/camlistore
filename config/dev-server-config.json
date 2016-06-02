@@ -63,7 +63,8 @@
 				"scaledImage": {
 					"type": "leveldb",
 					"file": ["_env", "${CAMLI_ROOT_CACHE}/thumbnails.leveldb", ""]
-				}
+				},
+				"videoThumbnail": "{}"
 			}
 		},
 

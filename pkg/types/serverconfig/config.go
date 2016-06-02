@@ -19,6 +19,7 @@ package serverconfig // import "camlistore.org/pkg/types/serverconfig"
 
 import (
 	"encoding/json"
+	"time"
 )
 
 // Config holds the values from the JSON (high-level) server config
@@ -84,6 +85,22 @@ type Config struct {
 	// TODO(mpl): map of importers instead?
 	Flickr string `json:"flickr,omitempty"` // flicker importer.
 	Picasa string `json:"picasa,omitempty"` // picasa importer.
+
+	VideoThumbnail *VideoThumbnail `json:"videoThumbnail,omitempty"`
+}
+
+type VideoThumbnail struct {
+	// Command is the full command and args used as the thumbnailer,
+	// including the "$uri" placeholder which is replaced at runtime with the
+	// video URI. It defaults to an ffmpeg based command.
+	Command []string `json:"command,omitempty"`
+	// Timeout is the duration (in milliseconds) a thumbnailer process is
+	// allowed to run.
+	// Negative means no timeout. It defaults to 5 seconds.
+	Timeout time.Duration `json:"timeout,omitempty"`
+	// MaxProcs is the maximum number of concurrent thumbnailing processes.
+	// Zero or negative means no limit.
+	MaxProcs int `json:"maxProcs,omitempty"`
 }
 
 // App holds the common configuration values for apps and the app handler.

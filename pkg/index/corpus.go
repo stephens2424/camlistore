@@ -73,6 +73,7 @@ type Corpus struct {
 	permanodes   map[blob.Ref]*PermanodeMeta
 	imageInfo    map[blob.Ref]camtypes.ImageInfo // keyed by fileref (not wholeref)
 	fileWholeRef map[blob.Ref]blob.Ref           // fileref -> its wholeref (TODO: multi-valued?)
+	videoInfo    map[blob.Ref]camtypes.VideoInfo // keyed by wholeRef
 	gps          map[blob.Ref]latLong            // wholeRef -> GPS coordinates
 
 	// Lack of edge tracking implementation is issue #707
@@ -266,6 +267,7 @@ func newCorpus() *Corpus {
 		files:        make(map[blob.Ref]camtypes.FileInfo),
 		permanodes:   make(map[blob.Ref]*PermanodeMeta),
 		imageInfo:    make(map[blob.Ref]camtypes.ImageInfo),
+		videoInfo:    make(map[blob.Ref]camtypes.VideoInfo),
 		deletedBy:    make(map[blob.Ref]blob.Ref),
 		keyId:        make(map[blob.Ref]string),
 		brOfStr:      make(map[string]blob.Ref),
@@ -329,6 +331,7 @@ var corpusMergeFunc = map[string]func(c *Corpus, k, v []byte) error{
 	"fileinfo":        (*Corpus).mergeFileInfoRow,
 	"filetimes":       (*Corpus).mergeFileTimesRow,
 	"imagesize":       (*Corpus).mergeImageSizeRow,
+	"video":           (*Corpus).mergeVideoRow,
 	"wholetofile":     (*Corpus).mergeWholeToFileRow,
 	"exifgps":         (*Corpus).mergeEXIFGPSRow,
 	"exiftag":         nil, // not using any for now
@@ -355,6 +358,7 @@ var slurpPrefixes = []string{
 	"wholetofile|",
 	"exifgps|",
 	"mediatag|",
+	keyVideo.name + "|",
 }
 
 // Key types (without trailing punctuation) that we slurp to memory at start.
@@ -429,14 +433,15 @@ func (c *Corpus) scanFromStorage(s sorted.KeyValue) error {
 		if ms1.Alloc < ms0.Alloc {
 			memUsed = 0
 		}
-		log.Printf("Corpus stats: %.3f MiB mem: %d blobs (%.3f GiB) (%d schema (%d permanode, %d file (%d image), ...)",
+		log.Printf("Corpus stats: %.3f MiB mem: %d blobs (%.3f GiB) (%d schema (%d permanode, %d file (%d image, %d video), ...)",
 			float64(memUsed)/(1<<20),
 			len(c.blobs),
 			float64(c.sumBlobBytes)/(1<<30),
 			c.numSchemaBlobs(),
 			len(c.permanodes),
 			len(c.files),
-			len(c.imageInfo))
+			len(c.imageInfo),
+			len(c.videoInfo))
 		log.Printf("Corpus scanning CPU usage: %v", cpu)
 	}
 
@@ -682,6 +687,18 @@ func (c *Corpus) mergeImageSizeRow(k, v []byte) error {
 	}
 	br = c.br(br)
 	c.imageInfo[br] = ii
+	return nil
+}
+
+// "video|<wholeRef>" = "width|height"
+func (c *Corpus) mergeVideoRow(k, v []byte) error {
+	br, okk := blob.ParseBytes(k[len(keyVideo.name+"|"):])
+	vi, okv := kvVideoInfo(v)
+	if !okk || !okv {
+		return fmt.Errorf("bogus video row %q = %q", k, v)
+	}
+	br = c.br(br)
+	c.videoInfo[br] = vi
 	return nil
 }
 
@@ -1208,6 +1225,19 @@ func (c *Corpus) GetFileInfo(ctx context.Context, fileRef blob.Ref) (fi camtypes
 
 func (c *Corpus) GetImageInfo(ctx context.Context, fileRef blob.Ref) (ii camtypes.ImageInfo, err error) {
 	ii, ok := c.imageInfo[fileRef]
+	if !ok {
+		err = os.ErrNotExist
+	}
+	return
+}
+
+func (c *Corpus) getVideoInfo(ctx context.Context, fileRef blob.Ref) (vi camtypes.VideoInfo, err error) {
+	wholeRef, ok := c.fileWholeRef[fileRef]
+	if !ok {
+		err = os.ErrNotExist
+		return
+	}
+	vi, ok = c.videoInfo[wholeRef]
 	if !ok {
 		err = os.ErrNotExist
 	}

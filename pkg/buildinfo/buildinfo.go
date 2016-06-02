@@ -55,3 +55,20 @@ func DjpegStatus() string {
 	}
 	return "unknown"
 }
+
+// ffmpegFunc implements FFmpegStatus. nil means the video/ffmpeg package
+// isn't linked in.
+var ffmpegFunc func() string
+
+func RegisterFFmpegStatusFunc(fn func() string) {
+	ffmpegFunc = fn
+}
+
+// FFmpegStatus returns a plaintext (non-HTML) string describing the
+// state of FFmpeg on the system.
+func FFmpegStatus() string {
+	if ffmpegFunc != nil {
+		return ffmpegFunc()
+	}
+	return "unknown"
+}

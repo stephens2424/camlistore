@@ -129,3 +129,9 @@ var Exp_KeyRecentPermanode = keyRecentPermanode
 func Exp_TypeOfKey(key string) string {
 	return typeOfKey(key)
 }
+
+func (x *Index) Exp_FinalizeInit() error {
+	return x.finalizeInit()
+}
+
+var Exp_ErrNoVidThumbnail = errNoVidThumbnail

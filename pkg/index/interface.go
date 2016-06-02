@@ -9,6 +9,8 @@ import (
 	"golang.org/x/net/context"
 )
 
+// TODO(mpl, bradfitz): Kill that interface.
+
 type Interface interface {
 	sync.Locker
 	RLock()
@@ -22,6 +24,10 @@ type Interface interface {
 
 	// Should return os.ErrNotExist if not found.
 	GetImageInfo(ctx context.Context, fileRef blob.Ref) (camtypes.ImageInfo, error)
+
+	// Should return os.ErrNotExist if not found.
+
+	GetVideoInfo(ctx context.Context, fileRef blob.Ref) (camtypes.VideoInfo, error)
 
 	// Should return os.ErrNotExist if not found.
 	GetMediaTags(ctx context.Context, fileRef blob.Ref) (map[string]string, error)

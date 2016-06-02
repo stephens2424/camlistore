@@ -17,6 +17,7 @@ limitations under the License.
 package server
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -45,6 +46,9 @@ import (
 	"camlistore.org/pkg/server/app"
 	"camlistore.org/pkg/sorted"
 	"camlistore.org/pkg/types/camtypes"
+	"camlistore.org/pkg/types/serverconfig"
+	"camlistore.org/pkg/video/ffmpeg"
+	"camlistore.org/pkg/video/thumbnail"
 	uistatic "camlistore.org/server/camlistored/ui"
 	closurestatic "camlistore.org/server/camlistored/ui/closure"
 	"code.google.com/p/rsc/qr"
@@ -88,8 +92,9 @@ type UIHandler struct {
 	Cache blobserver.Storage // or nil
 
 	// Limit peak RAM used by concurrent image thumbnail calls.
-	resizeSem *syncutil.Sem
-	thumbMeta *ThumbMeta // optional thumbnail key->blob.Ref cache
+	resizeSem      *syncutil.Sem
+	thumbMeta      *ThumbMeta         // optional thumbnail key->blob.Ref cache
+	videoThumbnail *thumbnail.Service // to generate thumbnails from videos. optional.
 
 	// sourceRoot optionally specifies the path to root of Camlistore's
 	// source. If empty, the UI files must be compiled in to the
@@ -128,6 +133,7 @@ func uiFromConfig(ld blobserver.Loader, conf jsonconfig.Obj) (h http.Handler, er
 	}
 	cachePrefix := conf.OptionalString("cache", "")
 	scaledImageConf := conf.OptionalObject("scaledImage")
+	vtConfJSON := conf.OptionalString("videoThumbnail", "")
 	if err = conf.Validate(); err != nil {
 		return
 	}
@@ -222,6 +228,22 @@ func uiFromConfig(ld blobserver.Loader, conf jsonconfig.Obj) (h http.Handler, er
 	} else {
 		return nil, errors.New("failed to find the 'root' handler")
 	}
+
+	var vth *thumbnail.Service
+	if vtConfJSON != "" {
+		var vtConf serverconfig.VideoThumbnail
+		if err := json.Unmarshal([]byte(vtConfJSON), &vtConf); err != nil {
+			return nil, err
+		}
+		vth, err = thumbnail.NewService(&vtConf)
+		if err != nil {
+			if err == ffmpeg.ErrFFmpegNotFound {
+				log.Print("Video thumbnailing was enabled in the server configuration, but FFmpeg was not found.")
+			}
+			return nil, err
+		}
+	}
+	ui.videoThumbnail = vth
 
 	return ui, nil
 }
@@ -561,13 +583,14 @@ func (ui *UIHandler) serveThumbnail(rw http.ResponseWriter, req *http.Request) {
 	}
 
 	th := &ImageHandler{
-		Fetcher:   ui.root.Storage,
-		Cache:     ui.Cache,
-		MaxWidth:  width,
-		MaxHeight: height,
-		ThumbMeta: ui.thumbMeta,
-		ResizeSem: ui.resizeSem,
-		Search:    ui.search,
+		Fetcher:        ui.root.Storage,
+		Cache:          ui.Cache,
+		MaxWidth:       width,
+		MaxHeight:      height,
+		ThumbMeta:      ui.thumbMeta,
+		ResizeSem:      ui.resizeSem,
+		Search:         ui.search,
+		VideoThumbnail: ui.videoThumbnail,
 	}
 	th.ServeHTTP(rw, req, blobref)
 }
