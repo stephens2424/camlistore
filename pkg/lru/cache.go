@@ -63,7 +63,7 @@ func (c *Cache) Add(key string, value interface{}) {
 	ele := c.ll.PushFront(&entry{key, value})
 	c.cache[key] = ele
 
-	if c.ll.Len() > c.maxEntries {
+	if c.maxEntries > 0 && c.ll.Len() > c.maxEntries {
 		c.removeOldest()
 	}
 }
